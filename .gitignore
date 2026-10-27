@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+.DS_Store
+
+# Large generated artefacts — keep the folders, not the contents
+results/samples/*
+results/raw/*
+!results/**/.gitkeep
+
+# Checkpoints and reference statistics
+checkpoints/
+*.pt
+*.npz
