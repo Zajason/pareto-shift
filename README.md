@@ -152,7 +152,7 @@ configurations. Both model families, caching and the cross-device timing are nev
 ## Documents
 
 - [Project proposal (PDF)](docs/proposal/proposal.pdf) · [LaTeX source](docs/proposal/proposal.tex)
-- [Proposal presentation (PPTX)](docs/Hardware_Efficient_GenModels_Proposal.pptx) (describes the earlier design, before acceleration was added)
+- [Proposal presentation (PPTX)](docs/Hardware_Efficient_GenModels_Proposal.pptx)
 - [Presentation talking points and Q&A prep (PDF)](docs/Talking_Points_QA_Prep.pdf)
 - Earlier proposal drafts:
   [submitted version (PDF)](docs/proposal_el23408.pdf),
