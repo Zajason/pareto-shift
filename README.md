@@ -25,7 +25,7 @@ the resulting quality–cost rankings of diffusion and flow-matching samplers su
 |---|---|
 | **H1 — Control** | Without acceleration, latency is linear in NFE on every device and rankings are stable. This validates the harness and isolates the effect of the accelerations. |
 | **H2 — Rankings move** | Speedups from caching and INT8/FP8 depend on the device and batch size, so adding them lowers cross-device rank agreement and changes Pareto-frontier membership. Neither NFE nor FLOPs predicts this. |
-| **H3 — Who tolerates caching** | Caching hurts least where consecutive network outputs are most similar. Flow matching, with straighter paths, should lose less quality under caching than diffusion, and both should lose more at 8 steps than at 32. |
+| **H3 — Who tolerates caching** | Caching hurts least where consecutive network outputs are most similar. Flow matching, with straighter paths, should lose less quality under caching than diffusion, and both should lose more at 8 steps than at 32. At 8 steps caching is predicted to fail, in quality, speed or both: a stated prediction to test, not a risk. |
 
 Either outcome is informative: it shows when NFE or FLOPs can stand in for measured cost, and when an efficiency
 claim must state its hardware.
@@ -53,8 +53,9 @@ counts toward NFE. FLOPs per image are counted separately, so cached calls show 
 | Google Colab T4 | Turing; fp16, INT8 (no bf16, no FP8) | Timing sweeps |
 | Ikaros GH200 | Hopper; fp16, bf16, INT8, FP8 (limited hours) | Timing sweeps and validation |
 
-Each run uses one GPU. If a device has no kernel for a configuration (e.g. FP8 on the T4), the configuration is
-recorded as unavailable. That gap is part of the result.
+Each run uses one GPU. A kernel smoke test in week 1 runs fp16, INT8 and FP8 on each GPU. If a device has no
+kernel for a configuration (e.g. FP8 on the T4), the configuration is fixed as unavailable before the sweep.
+That gap is part of the result.
 
 ### Measurement protocol (identical on every device)
 
@@ -63,6 +64,17 @@ recorded as unavailable. That gap is part of the result.
 3. **Time** with repeated CUDA-event runs.
 4. **Measure** peak memory and energy from the NVML counter. On the GH200, check that it reports GPU power rather than whole-module power.
 5. **Report** median and interquartile range.
+
+### Software stack
+
+The stack can't be fully identical across devices: Colab fixes its own environment, the RTX 5080 needs a recent
+CUDA release, and the GH200 host is ARM. To keep hardware the only intended variable:
+
+- every method uses one in-house implementation;
+- the same PyTorch and torchao versions are pinned wherever they are available;
+- exact versions are logged with every run.
+
+Any remaining difference is reported as a threat to validity.
 
 ### Quality evaluation
 
@@ -118,7 +130,7 @@ Caching and quantization will live in `src/pareto_shift/` once implemented.
 
 | Weeks | Phase | Milestone |
 |---|---|---|
-| 1–2 | **Setup:** checkpoints, environment, protocol | |
+| 1–2 | **Setup:** checkpoints, pinned environment on all three GPUs, protocol, kernel smoke test | Kernel availability fixed |
 | 3–4 | **Harness:** timing, energy and FLOP counting on the RTX 5080; caching and INT8/FP8 validated against fp16 | Harness validated |
 | 5–7 | **Pilot:** 2k images, FID, precision/recall, preliminary frontiers | Pilot frontier |
 | 8–9 | **Cross-device:** T4 and GH200 timing sweeps, output checks | Cross-device data |
@@ -159,8 +171,11 @@ configurations. Both model families, caching and the cross-device timing are nev
 7. X. Ma, G. Fang, X. Wang. "DeepCache: Accelerating Diffusion Models for Free." CVPR, 2024.
 8. P. Selvaraju et al. "FORA: Fast-Forward Caching in Diffusion Transformer Acceleration." arXiv:2407.01425, 2024.
 9. J. Wu et al. "PTQ4DiT: Post-training Quantization for Diffusion Transformers." NeurIPS, 2024.
-10. M. Dehghani et al. "The Efficiency Misnomer." ICLR, 2022.
-11. J.-W. Chung et al. "The ML.ENERGY Benchmark: Toward Automated Inference Energy Measurement and Optimization." NeurIPS Datasets and Benchmarks, 2025.
-12. G. Parmar, R. Zhang, J.-Y. Zhu. "On Aliased Resizing and Surprising Subtleties in GAN Evaluation." CVPR, 2022.
-13. T. Kynkäänniemi et al. "Improved Precision and Recall Metric for Assessing Generative Models." NeurIPS, 2019.
-14. M. J. Chong, D. Forsyth. "Effectively Unbiased FID and Inception Score and Where to Find Them." CVPR, 2020.
+10. X. Yin et al. "AccelAes: Accelerating Diffusion Transformers for Training-Free Aesthetic-Enhanced Image Generation." ECCV, 2026.
+11. A. Aggarwal, A. Shrivastava, M. Gwilliam. "Evolutionary Caching to Accelerate Your Off-the-Shelf Diffusion Model." ICLR, 2026.
+12. J. Liu et al. "A Survey on Cache Methods in Diffusion Models: Toward Efficient Multi-Modal Generation." arXiv:2510.19755, 2025.
+13. M. Dehghani et al. "The Efficiency Misnomer." ICLR, 2022.
+14. J.-W. Chung et al. "The ML.ENERGY Benchmark: Toward Automated Inference Energy Measurement and Optimization." NeurIPS Datasets and Benchmarks, 2025.
+15. G. Parmar, R. Zhang, J.-Y. Zhu. "On Aliased Resizing and Surprising Subtleties in GAN Evaluation." CVPR, 2022.
+16. T. Kynkäänniemi et al. "Improved Precision and Recall Metric for Assessing Generative Models." NeurIPS, 2019.
+17. M. J. Chong, D. Forsyth. "Effectively Unbiased FID and Inception Score and Where to Find Them." CVPR, 2020.

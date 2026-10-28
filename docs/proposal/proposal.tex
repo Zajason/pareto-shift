@@ -46,7 +46,9 @@ neither NFE nor FLOPs can predict.
 \textbf{H3 (who tolerates caching).} Caching reuses features computed at a neighbouring step, so it should hurt
 least where consecutive network outputs are most similar. I expect the flow-matching model, whose learned paths
 are designed to be straighter~\cite{lipman2023flow}, to lose less quality under caching than the diffusion
-model, and both to lose more at 8 steps than at 32.
+model, and both to lose more at 8 steps than at 32. At 8 steps there is little redundancy between steps to
+exploit, so I predict that caching fails there, in quality, in speed, or both; this is a stated prediction to
+test, not a risk to the project.
 
 \section{Motivation and Related Work}
 
@@ -57,7 +59,10 @@ evaluations~\cite{song2021ddim,lu2022dpmsolver}, and newer training-free methods
 evaluation instead: feature caching reuses intermediate activations across
 steps~\cite{ma2024deepcache,selvaraju2024fora}, and post-training quantization runs DiTs at 8~bits with
 little quality loss~\cite{wu2024ptq4dit}. These methods are evaluated on one GPU and reported as NFE, FLOPs, or
-a single speedup factor. FLOPs and parameter counts are known to disagree with measured
+a single speedup factor, and the factors are fragile: FORA gave no speedup ($0.99\times$) in a recent
+batch-1 comparison on an RTX~5090~\cite{yin2026accelaes}, implementations of the same caching method differ
+in latency on one GPU~\cite{aggarwal2026evocache}, and a recent survey names cross-platform behaviour as an
+open problem~\cite{liu2025cachesurvey}. FLOPs and parameter counts are known to disagree with measured
 efficiency~\cite{dehghani2022misnomer}, and inference-energy benchmarks show large differences between models
 and GPUs~\cite{chung2025mlenergy}, but they do not ask whether a diffusion-versus-flow or
 accelerated-versus-plain conclusion drawn on one GPU still holds on another.
@@ -73,12 +78,19 @@ toward NFE, and FLOPs per image are counted separately, so cached calls are visi
 
 \textbf{Hardware.} Three generations, one GPU per run: an NVIDIA RTX 5080 (Blackwell, local, the main
 machine), a Google Colab T4 (Turing, no bf16 or FP8), and one GH200 on the Ikaros cluster (Hopper, limited
-hours). Where a device lacks a kernel, as with FP8 on the T4, that configuration is recorded as unavailable;
-the gap is part of the result.
+hours). A kernel smoke test in week~1 runs fp16, INT8, and FP8 on each GPU; where a device lacks a kernel,
+as with FP8 on the T4, that configuration is fixed as unavailable before the sweep, and the gap is part of
+the result.
 
-\textbf{Protocol.} Pinned software versions, kernel warm-up, repeated CUDA-event timings reported as median and
-interquartile range, peak memory, and energy from the NVML counter, checking on the GH200 that it reports GPU
-rather than whole-module power.
+\textbf{Protocol.} Kernel warm-up, repeated CUDA-event timings reported as median and interquartile range,
+peak memory, and energy from the NVML counter, checking on the GH200 that it reports GPU rather than
+whole-module power.
+
+\textbf{Software stack.} The stack cannot be fully identical across devices: Colab fixes its own environment,
+the RTX~5080 needs a recent CUDA release, and the GH200 host is ARM. To keep hardware the only intended
+variable, every method uses one in-house implementation, the same PyTorch and torchao versions are pinned
+wherever they are available, and exact versions are logged with every run. Any remaining difference is
+reported as a threat to validity.
 
 \textbf{Quality.} All images are generated on the RTX 5080, which supports every configuration. Quality is a
 property of the configuration, not the device, and a subset is regenerated on the other two GPUs to confirm
@@ -108,7 +120,8 @@ and exhaustive solver searches are out of scope.
 
 \section{Proposed Schedule}
 
-\textit{Weeks 1--2:} checkpoints, environment, protocol. \textit{3--4:} timing, energy, and FLOP counting on
+\textit{Weeks 1--2:} checkpoints, pinned environment on all three GPUs, protocol, and the kernel smoke test.
+\textit{3--4:} timing, energy, and FLOP counting on
 the RTX 5080; caching and INT8/FP8 paths validated against fp16 outputs. \textit{5--7:} 2,000-image pilot,
 FID and precision/recall, preliminary frontiers. \textit{8--9:} timing sweeps on T4 and GH200 and
 cross-device output checks. \textit{10--11:} 10,000-image, three-seed confirmation. \textit{12--13:} analysis,
@@ -116,7 +129,7 @@ plots, report.
 
 % References are numbered in order of first citation (IEEE style).
 % Every \cite{key} above must match a \bibitem{key} below exactly, or LaTeX prints [?].
-\begin{thebibliography}{14}
+\begin{thebibliography}{17}
 
 \bibitem{ma2024sit}
 N.~Ma, M.~Goldstein, M.~S. Albergo, N.~M. Boffi, E.~Vanden-Eijnden, and S.~Xie, ``SiT: Exploring flow and
@@ -150,6 +163,18 @@ transformer acceleration,'' arXiv:2407.01425, 2024.
 \bibitem{wu2024ptq4dit}
 J.~Wu, H.~Wang, Y.~Shang, M.~Shah, and Y.~Yan, ``PTQ4DiT: Post-training quantization for diffusion
 transformers,'' in \emph{Proc. NeurIPS}, 2024.
+
+\bibitem{yin2026accelaes}
+X.~Yin, C.~Xu, H.~Zhou, B.~Wei, and W.~Cai, ``AccelAes: Accelerating diffusion transformers for training-free
+aesthetic-enhanced image generation,'' in \emph{Proc. ECCV}, 2026.
+
+\bibitem{aggarwal2026evocache}
+A.~Aggarwal, A.~Shrivastava, and M.~Gwilliam, ``Evolutionary caching to accelerate your off-the-shelf
+diffusion model,'' in \emph{Proc. ICLR}, 2026.
+
+\bibitem{liu2025cachesurvey}
+J.~Liu \emph{et al.}, ``A survey on cache methods in diffusion models: Toward efficient multi-modal
+generation,'' arXiv:2510.19755, 2025.
 
 \bibitem{dehghani2022misnomer}
 M.~Dehghani, A.~Arnab, L.~Beyer, A.~Vaswani, and Y.~Tay, ``The efficiency misnomer,'' in \emph{Proc. ICLR},
