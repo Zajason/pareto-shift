@@ -8,8 +8,8 @@
 
 \begin{document}
 
-\title{Does Hardware Change Which Generative Model Is Efficient?\\
-\large Training-Free Acceleration of Diffusion and Flow-Matching Transformers Across GPU Generations%
+\title{Do Efficient Generative Sampling Choices Transfer Across GPUs?\\
+\large Training-Free Acceleration of Diffusion and Flow-Matching Transformers%
 \thanks{Advanced Topics in Artificial Intelligence, 2026--2027. October 2026.}}
 
 \author{\IEEEauthorblockN{Iason-Daniil Zakynthinos}}
@@ -17,133 +17,155 @@
 \maketitle
 
 \begin{abstract}
-Sampling efficiency of image generators is usually reported as the number of function evaluations (NFE) or as
-a timing on one accelerator. NFE is a sound proxy only while every network call costs the same, but the
-training-free accelerations now used in practice, namely feature caching and low-precision kernels, change the
-cost of a call while leaving NFE unchanged, and their benefit depends on what the hardware supports. This project
-measures whether quality--cost rankings of diffusion and flow-matching samplers, with and without such
-accelerations, transfer across three GPU generations. For each device and batch size I will build Pareto
-frontiers from Fréchet Inception Distance (FID), precision/recall, latency, and energy per image, and quantify
-how far NFE and FLOPs mispredict the measured ranking.
+Do quality--efficiency conclusions about diffusion and flow-matching sampling remain valid across GPU platforms
+when training-free accelerations are introduced? This project tests whether the preferred sampling
+configuration changes at fixed image quality, and measures the cost of transferring choices between devices.
+Using pretrained DiT and SiT transformers, I compare plain sampling, feature caching, and INT8/FP8 inference on
+three GPU platforms. The primary outcome is the transfer penalty: the extra latency incurred by transferring a
+source-device choice instead of selecting on the target. Comparisons separate kernel availability from
+performance on shared configurations. Execution-cost models and feature-reuse diagnostics are used to explain
+the changes.
 \end{abstract}
 
 \section{Research Question and Hypotheses}
 
-\emph{When an acceleration changes the cost of a network call but not the number of calls, do the resulting
-quality--cost rankings of diffusion and flow-matching samplers survive a change of GPU?}
+\emph{Do quality--efficiency conclusions about diffusion and flow-matching sampling remain valid across GPU
+platforms when training-free accelerations are introduced?}
 
-\textbf{H1 (control).} Without acceleration, latency is linear in NFE on every device and rankings are stable.
-DiT and SiT share the same architecture and GFLOPs~\cite{ma2024sit}, and solver overhead is small next to a
-transformer forward pass, so this is expected; it confirms the harness and isolates the effect of the
-accelerations.
+\textbf{H1 (transfer baseline).} Within each batch size, a device-specific multiplicative latency factor
+adequately describes plain sampling across platforms. This separable model predicts stable choices;
+configuration-by-device interactions are the competing explanation. The test concerns practical selection
+penalties, not merely unequal speedups.
 
-\textbf{H2 (rankings move).} Speedups from feature caching and from INT8/FP8 kernels depend on the device and
-batch size: low-precision kernels help most when the GPU is compute-bound and not at all where they are
-unsupported, while caching helps less when a small batch leaves the GPU launch-bound. Adding these
-configurations should therefore lower cross-device rank agreement and change Pareto-frontier membership, which
-neither NFE nor FLOPs can predict.
+\textbf{H2 (cost explanation).} Caching and low-precision execution introduce interactions that cannot be
+explained by NFE or operation count alone. A parsimonious model incorporating effective arithmetic throughput,
+memory traffic, and fixed execution overhead should better predict held-out latency and transferred choices.
+Interactions may exist without changing the preferred configuration; the transfer penalty measures whether
+they matter.
 
-\textbf{H3 (who tolerates caching).} Caching reuses features computed at a neighbouring step, so it should hurt
-least where consecutive network outputs are most similar. I expect the flow-matching model, whose learned paths
-are designed to be straighter~\cite{lipman2023flow}, to lose less quality under caching than the diffusion
-model, and both to lose more at 8 steps than at 32. At 8 steps there is little redundancy between steps to
-exploit, so I predict that caching fails there, in quality, in speed, or both; this is a stated prediction to
-test, not a risk to the project.
+\textbf{H3 (quality mechanism; exploratory).} Relative feature-reuse error should predict caching-induced
+quality degradation better than step count alone, including when evaluated on the other model. No directional
+claim that flow matching tolerates caching better is assumed: straighter interpolation paths do not guarantee
+slowly changing hidden features.
 
 \section{Motivation and Related Work}
 
-Diffusion models generate images by iterative denoising~\cite{ho2020ddpm}; flow matching learns a velocity
-field along simpler probability paths~\cite{lipman2023flow}. DiT~\cite{peebles2023dit} and SiT~\cite{ma2024sit}
-form a controlled pair: one transformer backbone, two training objectives. Fast solvers cut sampling to tens of
-evaluations~\cite{song2021ddim,lu2022dpmsolver}, and newer training-free methods lower the cost of each
-evaluation instead: feature caching reuses intermediate activations across
-steps~\cite{ma2024deepcache,selvaraju2024fora}, and post-training quantization runs DiTs at 8~bits with
-little quality loss~\cite{wu2024ptq4dit}. These methods are evaluated on one GPU and reported as NFE, FLOPs, or
-a single speedup factor, and the factors are fragile: FORA gave no speedup ($0.99\times$) in a recent
-batch-1 comparison on an RTX~5090~\cite{yin2026accelaes}, implementations of the same caching method differ
-in latency on one GPU~\cite{aggarwal2026evocache}, and a recent survey names cross-platform behaviour as an
-open problem~\cite{liu2025cachesurvey}. FLOPs and parameter counts are known to disagree with measured
-efficiency~\cite{dehghani2022misnomer}, and inference-energy benchmarks show large differences between models
-and GPUs~\cite{chung2025mlenergy}, but they do not ask whether a diffusion-versus-flow or
-accelerated-versus-plain conclusion drawn on one GPU still holds on another.
+Diffusion and flow-matching models generate samples through repeated network
+evaluations~\cite{ho2020ddpm,lipman2023flow}. DiT and SiT provide comparable transformer backbones while
+differing in their generative formulation~\cite{peebles2023dit,ma2024sit}. Numerical solvers reduce the number
+of evaluations~\cite{song2021ddim,lu2022dpmsolver}; feature caching reduces computation within an
+evaluation~\cite{selvaraju2024fora}, and post-training quantization changes its arithmetic
+cost~\cite{wu2024ptq4dit}. These interventions therefore alter different components of inference cost.
+
+Reported speedups are usually measured on one GPU and can be fragile: FORA gave no speedup ($0.99\times$) in
+a recent batch-1 comparison on an RTX~5090~\cite{yin2026accelaes}. Quality--cost frontiers and caching
+schedules are already studied~\cite{aggarwal2026evocache}, operation counts are known to be imperfect
+efficiency proxies~\cite{dehghani2022misnomer}, and inference energy is benchmarked across models and
+GPUs~\cite{chung2025mlenergy}. Hardware-dependent speedup alone is therefore not the proposed contribution.
+The open question is whether platform differences change quality-constrained decisions, by how much, and
+whether inexpensive measurements can predict those changes. DiT and SiT are treated as two related workloads,
+not as a causal test of their training objectives.
 
 \section{Methodology}
 
-\textbf{Models and factors.} Public ImageNet-256 checkpoints of DiT-XL/2 and SiT-XL/2; nothing is trained.
-Samplers: DDIM and DPM-Solver for DiT, Euler and Heun ODE for SiT. Steps: 8, 16, 32. Acceleration: none
-(fp16), FORA-style feature caching with a fixed reuse interval~\cite{selvaraju2024fora}, INT8 W8A8, and FP8
-W8A8. This gives $2\times2\times3\times4=48$ configurations. Batch sizes 1 and 16 are a timing factor.
-Classifier-free guidance scale, compile settings, seeds, and class labels are fixed; every network call counts
-toward NFE, and FLOPs per image are counted separately, so cached calls are visible as cheaper calls.
+\textbf{Models and factors.} Public ImageNet-256 DiT-XL/2 and SiT-XL/2 checkpoints; no retraining. Samplers
+are DDIM and a specified DPM-Solver variant for DiT, and Euler and Heun ODE for SiT. Each uses 8, 16, or 32
+solver steps and one of four execution modes: FP16 baseline, FORA-style caching~\cite{selvaraju2024fora},
+INT8 W8A8, or FP8 W8A8. These are 48 configurations before availability exclusions. Batch sizes 1 and 16 are
+separate timing conditions. Actual NFE, including solver substages, guidance execution, and cached calls, is
+logged independently of nominal steps.
 
-\textbf{Hardware.} Three generations, one GPU per run: an NVIDIA RTX 5080 (Blackwell, local, the main
-machine), a Google Colab T4 (Turing, no bf16 or FP8), and one GH200 on the Ikaros cluster (Hopper, limited
-hours). A kernel smoke test in week~1 runs fp16, INT8, and FP8 on each GPU; where a device lacks a kernel,
-as with FP8 on the T4, that configuration is fixed as unavailable before the sweep, and the gap is part of
-the result.
+\textbf{Hardware and implementation.} An RTX~5080, a Colab T4, and a GH200 are three tested platforms, not
+samples of a GPU generation. End-to-end smoke tests establish supported kernels before the sweep. The manifest
+fixes checkpoint, timestep grid, solver order, guidance, labels, seeds, compilation policy, and VAE.
+Quantization specifies calibration data, scale granularity, excluded layers, accumulation precision, and the
+actual low-precision kernels. Calibration and evaluation seeds are disjoint; fake quantization is not counted
+as accelerated execution. PyTorch and torchao versions are pinned where possible, with driver, CUDA, host, and
+remaining stack differences recorded.
 
-\textbf{Protocol.} Kernel warm-up, repeated CUDA-event timings reported as median and interquartile range,
-peak memory, and energy from the NVML counter, checking on the GH200 that it reports GPU rather than
-whole-module power.
+\textbf{Caching policy and probes.} Cached attention/MLP outputs, refresh interval, initial refresh, and
+solver-substage behavior are fixed before evaluation. On a small independent probe set, reused features are
+compared with full recomputation at the same state and time, logging relative L2 error, magnitude change, and
+timestep/layer summaries. Probes run outside timed workloads, and the diagnostics are related to the FID change
+against the corresponding uncached configuration.
 
-\textbf{Software stack.} The stack cannot be fully identical across devices: Colab fixes its own environment,
-the RTX~5080 needs a recent CUDA release, and the GH200 host is ARM. To keep hardware the only intended
-variable, every method uses one in-house implementation, the same PyTorch and torchao versions are pinned
-wherever they are available, and exact versions are logged with every run. Any remaining difference is
-reported as a threat to validity.
+\textbf{Quality.} Generate 2,000 images per configuration for screening, using clean-fid with fixed ImageNet
+reference statistics~\cite{parmar2022cleanfid} and precision/recall~\cite{kynkaanniemi2019prd}. Before
+confirmation, freeze three FID ceilings spanning the useful pilot range and the selection rules. Retain
+configurations near the frontier, including those whose apparent dominance is unresolved. Confirm with three
+independent 10,000-image runs per retained configuration; report per-run scores and uncertainty rather than
+pooling unequal sample sizes. Equal counts do not eliminate FID bias~\cite{chong2020unbiased}.
 
-\textbf{Quality.} All images are generated on the RTX 5080, which supports every configuration. Quality is a
-property of the configuration, not the device, and a subset is regenerated on the other two GPUs to confirm
-that kernel differences do not change it. A pilot of 2,000 images per configuration uses clean-fid with fixed
-ImageNet statistics~\cite{parmar2022cleanfid} and improved precision/recall~\cite{kynkaanniemi2019prd}.
-Configurations on or near the pilot frontier are re-run with 10,000 images and three seeds. FID is compared
-only at equal sample counts, because it is biased at small $N$~\cite{chong2020unbiased}.
+Most quality evaluation uses the RTX~5080. Before reusing these scores elsewhere, regenerate a prespecified
+subset covering both models and every shared execution mode, including near-threshold cases. If equivalence
+within a declared tolerance is unresolved, evaluate the affected target-device candidates directly or exclude
+those comparisons from transfer claims.
+
+\textbf{Timing and energy.} After warm-up and compilation, randomize configuration order and repeat
+measurements in multiple sessions. Report median and interquartile range for synchronized end-to-end
+generation, with denoising and VAE decoding also timed separately. Distinguish batch latency from throughput
+and amortized time per image. Record peak memory, power limits, and clocks. Energy is secondary: measure
+repeated workloads over long windows using supported NVML counters, state the power domain and idle treatment,
+and omit incomparable measurements.
 
 \section{Analysis, Feasibility, and Expected Contribution}
 
-\textbf{H1/H2.} Per device and batch size, regress latency and energy on NFE and on FLOPs, and report the
-error by acceleration type. Build FID--latency and FID--energy frontiers, compute Kendall's~$\tau$ between
-devices for plain and accelerated configurations with bootstrap intervals, and list every configuration that
-is on the frontier on one device but dominated on another. \textbf{H3.} Compare the FID increase caused by
-caching across family and step count. As a mechanism check, relate it to the cosine similarity of
-consecutive-step block outputs, which is cheap to log during sampling.
+\textbf{Primary outcome.} For each ordered device pair, batch size, and FID ceiling, restrict selection to
+configurations executable on both platforms and meeting the quality requirement. Choose the fastest on the
+source and evaluate its target latency. Transfer penalty is target latency divided by the fastest eligible
+target latency, minus one. Define near-optimal as a penalty of at most 5\%. Unsupported methods and empty
+feasible sets are reported separately. Propagate timing and quality uncertainty; do not force a winner when
+eligibility or dominance is unresolved.
 
-\textbf{Feasibility.} About 6 GPU-hours on the RTX 5080 cover the 48-configuration pilot; the confirmation
-stage adds about a day. Cross-device work consists of short timing sweeps. If compute is short, cut in order:
-FP8, then batch 16 on Ikaros, then the 32-step level for accelerated configurations. Both families, caching,
-and the cross-device timing are never cut.
+\textbf{H1/H2.} Compare the common-scaling baseline with configuration-by-device interactions. Fit NFE-only and
+operation-count baselines, then a small hardware-aware cost model using compute, memory, and overhead terms.
+Effective rates come from independent representative kernel probes; memory traffic is estimated with stated
+assumptions. Validate by holding out configuration groups and, exploratorily, one device at a time, without
+fitting to its end-to-end timings. Report latency error and decision penalty. Pareto frontiers and
+latency-only Kendall tau-b on shared configurations are secondary summaries.
 
-\textbf{Deliverables.} (i) An open benchmark harness and configuration manifest, (ii) per-device Pareto
-frontiers and rank-agreement statistics, and (iii) evidence on when NFE or FLOPs can stand in for measured cost
-and when an efficiency claim must state its hardware. Either outcome is informative. Serving systems, training,
-and exhaustive solver searches are out of scope.
+\textbf{H3.} Test whether feature-reuse diagnostics predict the quality change beyond model, solver, and step
+count. Evaluate cross-model prediction separately from within-model fit, and report negative results.
+
+\textbf{Feasibility.} Nothing is trained. At DiT-XL/2 cost, the 2,000-image pilot over all 48 configurations
+needs roughly 6 GPU-hours on the RTX~5080 and the confirmation stage about a day; the exact budget is set from
+measured pilot throughput and logged. Work on the T4 and GH200 is limited to timing sweeps, kernel probes, and
+the regenerated quality subset. If time is short, cut in this order: held-out-device validation, FP8, batch
+16 on the GH200, then the 32-step level for accelerated configurations. The transfer-penalty analysis on
+shared configurations is never cut.
+
+\textbf{Expected contribution.} Evidence on whether the preferred model--sampler--acceleration configuration
+changes across platforms at fixed image quality; transfer penalties with uncertainty; an execution-cost
+explanation of the changes; and an open harness and manifest. Stable choices with tightly bounded penalties
+are also informative. Claims are limited to the tested platforms and configuration space. Serving, training,
+and exhaustive solver or cache-policy optimization are out of scope.
 
 \section{Proposed Schedule}
 
-\textit{Weeks 1--2:} checkpoints, pinned environment on all three GPUs, protocol, and the kernel smoke test.
-\textit{3--4:} timing, energy, and FLOP counting on
-the RTX 5080; caching and INT8/FP8 paths validated against fp16 outputs. \textit{5--7:} 2,000-image pilot,
-FID and precision/recall, preliminary frontiers. \textit{8--9:} timing sweeps on T4 and GH200 and
-cross-device output checks. \textit{10--11:} 10,000-image, three-seed confirmation. \textit{12--13:} analysis,
-plots, report.
+\textit{Weeks 1--2:} checkpoints, environments, complete kernel smoke tests, and manifest.
+\textit{3--4:} solver/caching validation, quantization calibration, and timing protocol.
+\textit{5--7:} quality pilot, feature probes, frozen thresholds and shortlist.
+\textit{8--9:} cross-platform timing, kernel probes, and quality checks.
+\textit{10--11:} independent quality confirmation and targeted target-device evaluation.
+\textit{12--13:} held-out analysis, uncertainty, plots, and report.
 
 % References are numbered in order of first citation (IEEE style).
 % Every \cite{key} above must match a \bibitem{key} below exactly, or LaTeX prints [?].
-\begin{thebibliography}{17}
+\begin{thebibliography}{15}
 
-\bibitem{ma2024sit}
-N.~Ma, M.~Goldstein, M.~S. Albergo, N.~M. Boffi, E.~Vanden-Eijnden, and S.~Xie, ``SiT: Exploring flow and
-diffusion-based generative models with scalable interpolant transformers,'' in \emph{Proc. ECCV}, 2024.
+\bibitem{ho2020ddpm}
+J.~Ho, A.~Jain, and P.~Abbeel, ``Denoising diffusion probabilistic models,'' in \emph{Proc. NeurIPS}, 2020.
 
 \bibitem{lipman2023flow}
 Y.~Lipman, R.~T.~Q. Chen, H.~Ben-Hamu, M.~Nickel, and M.~Le, ``Flow matching for generative modeling,'' in
 \emph{Proc. ICLR}, 2023.
 
-\bibitem{ho2020ddpm}
-J.~Ho, A.~Jain, and P.~Abbeel, ``Denoising diffusion probabilistic models,'' in \emph{Proc. NeurIPS}, 2020.
-
 \bibitem{peebles2023dit}
 W.~Peebles and S.~Xie, ``Scalable diffusion models with transformers,'' in \emph{Proc. ICCV}, 2023.
+
+\bibitem{ma2024sit}
+N.~Ma, M.~Goldstein, M.~S. Albergo, N.~M. Boffi, E.~Vanden-Eijnden, and S.~Xie, ``SiT: Exploring flow and
+diffusion-based generative models with scalable interpolant transformers,'' in \emph{Proc. ECCV}, 2024.
 
 \bibitem{song2021ddim}
 J.~Song, C.~Meng, and S.~Ermon, ``Denoising diffusion implicit models,'' in \emph{Proc. ICLR}, 2021.
@@ -151,10 +173,6 @@ J.~Song, C.~Meng, and S.~Ermon, ``Denoising diffusion implicit models,'' in \emp
 \bibitem{lu2022dpmsolver}
 C.~Lu, Y.~Zhou, F.~Bao, J.~Chen, C.~Li, and J.~Zhu, ``DPM-Solver: A fast ODE solver for diffusion probabilistic
 model sampling in around 10 steps,'' in \emph{Proc. NeurIPS}, 2022.
-
-\bibitem{ma2024deepcache}
-X.~Ma, G.~Fang, and X.~Wang, ``DeepCache: Accelerating diffusion models for free,'' in \emph{Proc. CVPR},
-2024.
 
 \bibitem{selvaraju2024fora}
 P.~Selvaraju, T.~Ding, T.~Chen, I.~Zharkov, and L.~Liang, ``FORA: Fast-forward caching in diffusion
@@ -171,10 +189,6 @@ aesthetic-enhanced image generation,'' in \emph{Proc. ECCV}, 2026.
 \bibitem{aggarwal2026evocache}
 A.~Aggarwal, A.~Shrivastava, and M.~Gwilliam, ``Evolutionary caching to accelerate your off-the-shelf
 diffusion model,'' in \emph{Proc. ICLR}, 2026.
-
-\bibitem{liu2025cachesurvey}
-J.~Liu \emph{et al.}, ``A survey on cache methods in diffusion models: Toward efficient multi-modal
-generation,'' arXiv:2510.19755, 2025.
 
 \bibitem{dehghani2022misnomer}
 M.~Dehghani, A.~Arnab, L.~Beyer, A.~Vaswani, and Y.~Tay, ``The efficiency misnomer,'' in \emph{Proc. ICLR},
